@@ -55,11 +55,31 @@ inline Real fresnel_dielectric(Real n_dot_i, Real eta) {
     return fresnel_dielectric(fabs(n_dot_i), n_dot_t, eta);
 }
 
+
+inline Real GTR1(Real h_l, Real alpha_g) {
+
+    return pow(alpha_g, 2) - 1 / (c_PI * log(pow(alpha_g, 2)) * (1 + (pow(alpha_g, 2) - 1) * pow(h_l, 2)));
+}
+
 inline Real GTR2(Real n_dot_h, Real roughness) {
     Real alpha = roughness * roughness;
     Real a2 = alpha * alpha;
     Real t = 1 + (a2 - 1) * n_dot_h * n_dot_h;
     return a2 / (c_PI * t*t);
+}
+
+inline Real GTR2(Spectrum h_l, Real alpha_x, Real alpha_y) {
+
+    
+    Real h_term = pow(pow(h_l.x / alpha_x, 2) + pow(h_l.y / alpha_y, 2) + pow(h_l.z, 2), 2);
+    Real D_m = 1 / (c_PI * alpha_x * alpha_y * (h_term));
+
+    return D_m;
+}
+
+inline Real smith_masking_gtr2(Spectrum w_l, Real alpha_x, Real alpha_y) {
+
+    return (2.0 / (1 + sqrt(1 + (pow(w_l.x * alpha_x, 2.0) + pow(w_l.y * alpha_y, 2.0)) / pow(w_l.z, 2.0))));
 }
 
 inline Real GGX(Real n_dot_h, Real roughness) {
@@ -111,4 +131,35 @@ inline Vector3 sample_visible_normals(const Vector3 &local_dir_in, Real alpha, c
 
     // Transforming the normal back to the ellipsoid configuration
     return normalize(Vector3{alpha * hemi_N.x, alpha * hemi_N.y, max(Real(0), hemi_N.z)});
+}
+
+Vector3 sample_visible_normals(const Vector3& local_dir_in, Real ax, Real ay, const Vector2& rnd_param) {
+    // The incoming direction is in the "ellipsodial configuration" in Heitz's paper
+    if (local_dir_in.z < 0) {
+        // Ensure the input is on top of the surface.
+        return -sample_visible_normals(-local_dir_in, ax, ay, rnd_param);
+    }
+
+    // Transform the incoming direction to the "hemisphere configuration".
+    Vector3 hemi_dir_in = normalize(
+        Vector3{ ax * local_dir_in.x, ay * local_dir_in.y, local_dir_in.z });
+
+    // Parameterization of the projected area of a hemisphere.
+    // First, sample a disk.
+    Real r = sqrt(rnd_param.x);
+    Real phi = 2 * c_PI * rnd_param.y;
+    Real t1 = r * cos(phi);
+    Real t2 = r * sin(phi);
+    // Vertically scale the position of a sample to account for the projection.
+    Real s = (1 + hemi_dir_in.z) / 2;
+    t2 = (1 - s) * sqrt(1 - t1 * t1) + s * t2;
+    // Point in the disk space
+    Vector3 disk_N{ t1, t2, sqrt(max(Real(0), 1 - t1 * t1 - t2 * t2)) };
+
+    // Reprojection onto hemisphere -- we get our sampled normal in hemisphere space.
+    Frame hemi_frame(hemi_dir_in);
+    Vector3 hemi_N = to_world(hemi_frame, disk_N);
+
+    // Transforming the normal back to the ellipsoid configuration
+    return normalize(Vector3{ ax * hemi_N.x, ay * hemi_N.y, max(Real(0), hemi_N.z) });
 }
